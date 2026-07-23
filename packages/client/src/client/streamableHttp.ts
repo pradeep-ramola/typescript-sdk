@@ -694,7 +694,7 @@ export class StreamableHTTPClientTransport implements Transport {
         // caller just tore down.
         const isIntentionalAbort = (): boolean => this._abortController?.signal.aborted === true || requestSignal?.aborted === true;
 
-        let lastEventId: string | undefined;
+        let lastEventId: string | undefined = options.resumptionToken;
         // Track whether we've received a priming event (event with ID)
         // Per spec, server SHOULD send a priming event with ID before closing
         let hasPrimingEvent = false;

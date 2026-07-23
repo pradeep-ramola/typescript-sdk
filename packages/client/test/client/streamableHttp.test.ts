@@ -582,6 +582,51 @@ describe('StreamableHTTPClientTransport', () => {
         expect(headers.get('last-event-id')).toBe('test-event-id');
     });
 
+    it('preserves the resumption token when a resumed stream closes before sending a new event id', async () => {
+        const scheduler: ReconnectionScheduler = reconnect => {
+            void reconnect();
+        };
+        transport = new StreamableHTTPClientTransport(new URL('http://localhost:1234/mcp'), {
+            reconnectionOptions: {
+                initialReconnectionDelay: 10,
+                maxRetries: 1,
+                maxReconnectionDelay: 10,
+                reconnectionDelayGrowFactor: 1
+            },
+            reconnectionScheduler: scheduler
+        });
+
+        const fetchMock = globalThis.fetch as Mock;
+        fetchMock.mockReset();
+        fetchMock
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'content-type': 'text/event-stream' }),
+                body: new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        controller.close();
+                    }
+                })
+            })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'content-type': 'text/event-stream' }),
+                body: new ReadableStream<Uint8Array>()
+            });
+
+        await transport.start();
+        await transport.resumeStream('event-1');
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        const firstCallHeaders = fetchMock.mock.calls[0]![1]?.headers;
+        const secondCallHeaders = fetchMock.mock.calls[1]![1]?.headers;
+        expect(firstCallHeaders?.get('last-event-id')).toBe('event-1');
+        expect(secondCallHeaders?.get('last-event-id')).toBe('event-1');
+    });
+
     it('should include requestInit options (credentials, mode, etc.) in GET SSE request', async () => {
         // Regression test for #895: POST and DELETE requests spread _requestInit but the
         // GET SSE request did not, so non-header options like credentials were dropped.

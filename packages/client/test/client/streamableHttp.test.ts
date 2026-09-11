@@ -791,10 +791,13 @@ describe('StreamableHTTPClientTransport', () => {
 
         (globalThis.fetch as Mock).mockImplementation(async (_url, reqInit) => {
             actualReqInit = reqInit;
-            return new Response(JSON.stringify({ jsonrpc: '2.0', result: {} }), {
-                status: 200,
-                headers: { 'content-type': 'application/json' }
-            });
+            return Response.json(
+                { jsonrpc: '2.0', result: {} },
+                {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' }
+                }
+            );
         });
 
         await transport.start();
@@ -834,10 +837,13 @@ describe('StreamableHTTPClientTransport', () => {
 
         (globalThis.fetch as Mock).mockImplementation(async (_url, reqInit) => {
             actualReqInit = reqInit;
-            return new Response(JSON.stringify({ jsonrpc: '2.0', result: {} }), {
-                status: 200,
-                headers: { 'content-type': 'application/json' }
-            });
+            return Response.json(
+                { jsonrpc: '2.0', result: {} },
+                {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' }
+                }
+            );
         });
 
         await transport.start();
@@ -859,10 +865,13 @@ describe('StreamableHTTPClientTransport', () => {
 
         (globalThis.fetch as Mock).mockImplementation(async (_url, reqInit) => {
             actualReqInit = reqInit;
-            return new Response(JSON.stringify({ jsonrpc: '2.0', result: {} }), {
-                status: 200,
-                headers: { 'content-type': 'application/json' }
-            });
+            return Response.json(
+                { jsonrpc: '2.0', result: {} },
+                {
+                    status: 200,
+                    headers: { 'content-type': 'application/json' }
+                }
+            );
         });
 
         await transport.start();
@@ -1166,9 +1175,9 @@ describe('StreamableHTTPClientTransport', () => {
 
         expect(authSpy).toHaveBeenCalledTimes(2);
         // First step-up: union(undefined, token 'a b', challenge 'b c') = 'a b c'
-        expect(authSpy.mock.calls[0]![1].scope?.split(' ').sort()).toEqual(['a', 'b', 'c']);
+        expect(authSpy.mock.calls[0]![1].scope?.split(' ').toSorted()).toEqual(['a', 'b', 'c']);
         // Second step-up: union(tracked 'a b c', token 'a b', challenge 'd') = 'a b c d'
-        expect(authSpy.mock.calls[1]![1].scope?.split(' ').sort()).toEqual(['a', 'b', 'c', 'd']);
+        expect(authSpy.mock.calls[1]![1].scope?.split(' ').toSorted()).toEqual(['a', 'b', 'c', 'd']);
 
         authSpy.mockRestore();
     });
@@ -1865,7 +1874,7 @@ describe('StreamableHTTPClientTransport', () => {
                 }
             });
 
-            const fetchMock = global.fetch as Mock;
+            const fetchMock = globalThis.fetch as Mock;
             fetchMock.mockResolvedValueOnce({
                 ok: true,
                 status: 200,
@@ -1896,7 +1905,7 @@ describe('StreamableHTTPClientTransport', () => {
                 expect.objectContaining({
                     jsonrpc: '2.0',
                     error: expect.objectContaining({
-                        code: -32602,
+                        code: -32_602,
                         message: 'Tool not found'
                     }),
                     id: 'request-1'
@@ -2730,7 +2739,7 @@ describe('StreamableHTTPClientTransport', () => {
                 // Retry the original request - still 401 (broken server)
                 .mockResolvedValueOnce(unauthedResponse);
 
-            const error = await transport.send(message).catch(e => e);
+            const error = await transport.send(message).catch(error_ => error_);
             expect(error).toBeInstanceOf(SdkHttpError);
             expect((error as SdkHttpError).code).toBe(SdkErrorCode.ClientHttpAuthentication);
             expect((error as SdkHttpError).status).toBe(401);
@@ -2781,7 +2790,7 @@ describe('StreamableHTTPClientTransport', () => {
         });
 
         it('falls back to setTimeout when no scheduler is provided', () => {
-            const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+            const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
             transport = new StreamableHTTPClientTransport(new URL('http://localhost:1234/mcp'), {
                 reconnectionOptions
             });
@@ -2792,7 +2801,7 @@ describe('StreamableHTTPClientTransport', () => {
         });
 
         it('does not use setTimeout when a custom scheduler is provided', () => {
-            const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+            const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
             transport = new StreamableHTTPClientTransport(new URL('http://localhost:1234/mcp'), {
                 reconnectionOptions,
                 reconnectionScheduler: vi.fn()
@@ -2831,7 +2840,7 @@ describe('StreamableHTTPClientTransport', () => {
         });
 
         it('clears the default setTimeout on close() when no scheduler is provided', async () => {
-            const clearTimeoutSpy = vi.spyOn(global, 'clearTimeout');
+            const clearTimeoutSpy = vi.spyOn(globalThis, 'clearTimeout');
             transport = new StreamableHTTPClientTransport(new URL('http://localhost:1234/mcp'), {
                 reconnectionOptions
             });

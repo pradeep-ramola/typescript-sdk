@@ -19,7 +19,7 @@ If you are already on v2 and want to adopt the **2026-07-28 protocol revision**,
    both `import` and `require('@modelcontextprotocol/…')` resolve natively.
 2. **Run the codemod.**
     ```bash
-    npx @modelcontextprotocol/codemod@beta v1-to-v2 .
+    npx @modelcontextprotocol/codemod@latest v1-to-v2 .
     ```
     Run it at the **package root** (`.`), not `./src` — it also rewrites `package.json`,
     and real projects import the SDK from `test/`, `scripts/`, and fixtures too.
@@ -233,10 +233,9 @@ quote-anchored pattern misses silently — match either quote. The build layout 
 changed: v2 emits `.mjs`/`.cjs` siblings in a flat `dist/`, so v1's `/dist/cjs/` ↔
 `/dist/esm/` flavor-pair path swaps have no equivalent.
 
-#### Registry availability during the beta
+#### Registry availability
 
-All v2 packages are published on the public npm registry. Two notes for the beta
-window:
+All v2 packages are published on the public npm registry. Two notes:
 
 - As of `2.0.0-beta.1` all v2 packages share one version number (earlier alphas
   did not). The codemod writes ranges that match what is published, so prefer its
@@ -707,10 +706,9 @@ the host side and register the result with `fromJsonSchema()`: zod-4 input via z
 own `z.toJSONSchema(z.object(shape), { io: 'input', target: 'draft-2020-12' })` (the
 conversion is runtime-structural, so a zod ≥4.2 in the host handles schemas built by a
 different zod-4 copy), zod-3 input via the
-[`zod-to-json-schema`](https://www.npmjs.com/package/zod-to-json-schema) package. Strip
-the `$schema` member from the converted output before passing it to `fromJsonSchema()`
-— `zod-to-json-schema` stamps a draft-07 `$schema` by default, and the default
-validator [accepts 2020-12 only](#json-schema-2020-12-posture-sep-1613-sep-2106).
+[`zod-to-json-schema`](https://www.npmjs.com/package/zod-to-json-schema) package. Its
+default draft-07 `$schema` stamp is fine as-is — the default validator
+[honors declared draft-07/06 dialects](#json-schema-2020-12-posture-sep-1613-sep-2106).
 
 How a too-old zod surfaces depends on which entry point your code imports. With
 main-entry `import { z } from 'zod'` on a zod-3 range, the project **typechecks cleanly
@@ -1118,6 +1116,22 @@ OAuth `onUnauthorized` behavior, for composing your own adapter).
   discovery state so the callback-leg check on retry does not mask the original error.
   A provider whose `invalidateCredentials()` implementation special-cases the `'all'`
   scope must handle the split calls.
+- **Token persistence failures after a refresh now propagate.** v1 wrapped both
+  `refreshAuthorization()` and the `saveTokens()` that persists its result in one
+  `try`/`catch`, so a provider's persistence error was discarded alongside AS-side refresh
+  failures and `auth()` fell through to a fresh authorization request, returning
+  `'REDIRECT'`. Only the refresh call is guarded now — persisting runs after it and rejects
+  to the caller. Against an AS that rotates refresh tokens this was destructive rather than
+  merely quiet: the exchange has already succeeded, so the old refresh token is invalidated
+  server-side the moment the new one is issued, and dropping the new token set leaves
+  nothing usable on either side. A provider whose `saveTokens()` can throw (transient
+  storage errors, file-lock contention) must handle the rejection from `auth()` — and from
+  the transport 401-retry paths built on it — where v1 silently re-authorized. Refresh
+  failures themselves keep their control flow: a `ServerError` or an unknown error still
+  falls through to a new authorization request, and `invalid_grant` / `invalid_client` /
+  `unauthorized_client` are still recovered by discarding stored credentials and retrying.
+  Both routes now emit a `console.warn` naming the cause, so an unexplained re-auth prompt
+  can be traced to the failure that triggered it.
 
 #### OAuth client flow errors (new)
 
@@ -1152,11 +1166,11 @@ try {
 }
 ```
 
-One qualification: this direct `instanceof` check applies under the default `'legacy'`
-version negotiation. Under the probing modes (`versionNegotiation: { mode: 'auto' }`,
-with or without a pin) the connect-time 401 currently surfaces wrapped as
-`SdkError(SdkErrorCode.EraNegotiationFailed)` with the `UnauthorizedError` at
-`error.data.cause` — unwrap before the check, as shown in the
+This direct `instanceof` check works in every version-negotiation mode: under the
+probing modes (`versionNegotiation: { mode: 'auto' }`, with or without a pin) the
+connect-time `UnauthorizedError` also propagates unchanged from `connect()`. Older
+releases wrapped it as `SdkError(SdkErrorCode.EraNegotiationFailed)` with the error at
+`error.data.cause` — that unwrap is no longer needed. See the
 [client OAuth guide](../clients/oauth.md).
 
 #### `auth()` options are now `AuthOptions`
@@ -1455,9 +1469,19 @@ classes — import it from one package consistently within a process.
 
 #### JSON Schema 2020-12 posture (SEP-1613, SEP-2106)
 
-The default validator supports **JSON Schema 2020-12 only**. On Node it is now `Ajv2020`
-instead of draft-07 `Ajv`; the Cloudflare Workers default was already 2020-12. Schemas
-declaring a different `$schema` are rejected with `Error("…unsupported dialect…")`.
+The default validator dispatches on the schema's declared `$schema`: absent or 2020-12
+validates as **JSON Schema 2020-12** — on Node via `Ajv2020` instead of v1's draft-07
+`Ajv` (the Cloudflare Workers default was already 2020-12) — a declared 2019-09
+`$schema` validates with 2019-09 semantics (`Ajv2019`), and a declared draft-07 or
+draft-06 `$schema` validates with draft-07 semantics. Schemas declaring any other
+`$schema` are rejected with `Error("…unsupported dialect…")`. Two known draft-07 engine
+differences: the Node engine (classic Ajv, same as v1's default) evaluates keywords
+adjacent to `$ref`, stricter than draft-07's ignore-siblings rule, while the
+browser/Workers engine ignores them per spec; and the browser/Workers engine does not
+resolve a `$ref` inside a `dependencies` entry whose key collides with a JSON Schema
+keyword (`type`, `default`, `format`, …) — validation throws `Unresolved $ref` when
+that dependency triggers (surfaced as the SDK's typed validation error), while the
+Node engine handles the same schema correctly.
 
 `CallToolResult.structuredContent` is widened from `{ [k: string]: unknown }` to
 `unknown` (SEP-2106 lifts the `type:"object"` root restriction). The presence check is
@@ -1465,13 +1489,13 @@ declaring a different `$schema` are rejected with `Error("…unsupported dialect
 `$ref` is not dereferenced (unchanged from v1; Ajv throws `MissingRefError` at compile,
 surfaced per-tool on `callTool`).
 
-| v1 pattern                                                         | Mechanical fix                                                                                                                                                                                         |
-| ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `result.structuredContent.<key>` / `result.structuredContent?.<k>` | narrow first: `const sc = result.structuredContent; if (typeof sc === 'object' && sc !== null && '<k>' in sc) { sc.<k> }`                                                                              |
-| `if (!result.structuredContent)`                                   | `if (result.structuredContent === undefined)`                                                                                                                                                          |
-| relying on default `Ajv` being draft-07                            | `new AjvJsonSchemaValidator(new Ajv({ strict: false, validateFormats: true, validateSchema: false, allErrors: true }))` (import `Ajv`, `addFormats`, `AjvJsonSchemaValidator` from `…/validators/ajv`) |
-| draft-07 idioms via `fromJsonSchema(schema)`                       | `fromJsonSchema(schema, new AjvJsonSchemaValidator(ajv))` — the `McpServer`/`Client` `jsonSchemaValidator` option does **not** reach `fromJsonSchema`-authored schemas                                 |
-| `outputSchema` / `inputSchema` with absolute-URI `$ref`            | inline under `$defs` and reference with `#/$defs/Name`                                                                                                                                                 |
+| v1 pattern                                                                                                   | Mechanical fix                                                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `result.structuredContent.<key>` / `result.structuredContent?.<k>`                                           | narrow first: `const sc = result.structuredContent; if (typeof sc === 'object' && sc !== null && '<k>' in sc) { sc.<k> }`                                                                              |
+| `if (!result.structuredContent)`                                                                             | `if (result.structuredContent === undefined)`                                                                                                                                                          |
+| draft-07 idioms **without** a declared `$schema` (a declared draft-07/06 `$schema` dispatches automatically) | `new AjvJsonSchemaValidator(new Ajv({ strict: false, validateFormats: true, validateSchema: false, allErrors: true }))` (import `Ajv`, `addFormats`, `AjvJsonSchemaValidator` from `…/validators/ajv`) |
+| undeclared draft-07 idioms via `fromJsonSchema(schema)`                                                      | `fromJsonSchema(schema, new AjvJsonSchemaValidator(ajv))` — the `McpServer`/`Client` `jsonSchemaValidator` option does **not** reach `fromJsonSchema`-authored schemas                                 |
+| `outputSchema` / `inputSchema` with absolute-URI `$ref`                                                      | inline under `$defs` and reference with `#/$defs/Name`                                                                                                                                                 |
 
 A tool may now register an `outputSchema` whose root is `type:"array"`, `type:"string"`,
 etc.; toward 2025-era clients the codec wraps it in a `{result:…}` envelope, and toward
@@ -1498,7 +1522,11 @@ rewrite required unless noted.
   on those survive verbatim. The cancelled-on-timeout signal is unchanged on legacy-era
   connections and on stdio/in-memory at any era; on 2026-era Streamable HTTP the cancel
   signal is the per-request stream close instead of a `notifications/cancelled` POST
-  (see [support-2026-07-28.md](./support-2026-07-28.md)).
+  (see [support-2026-07-28.md](./support-2026-07-28.md)). The one exemption is the
+  `initialize` handshake: an aborted or timed-out `connect()` still rejects locally, but
+  no `notifications/cancelled` goes on the wire — the spec forbids cancelling
+  `initialize`, and v1 sent one anyway. v1 tests asserting that notification need
+  re-baselining.
 - **Also unchanged: SSE reconnection exhaustion.** `StreamableHTTPClientTransport`'s
   standalone GET-stream reconnection behavior and its exhaustion signal carry over from
   v1: when retries run out, the transport emits `onerror` with a plain `Error` whose
